@@ -1,0 +1,78 @@
+# Prometheus + Grafana + Alertmanager configuration
+# for the k8s-sre-lab local cluster
+#
+# We disable some components that need cloud storage or
+# multiple nodes, since this is a single-node local lab.
+
+prometheus:
+  prometheusSpec:
+    # How long to keep metrics data (15 days is enough for a lab)
+    retention: 15d
+    # Store data inside the container (no persistent volume needed for lab)
+    storageSpec: {}
+    # Scrape metrics every 15 seconds (production standard)
+    scrapeInterval: "15s"
+    # Extra scrape config to monitor k3s components
+    additionalScrapeConfigs:
+      - job_name: 'k3s-node'
+        static_configs:
+          - targets: ['localhost:9100']
+
+grafana:
+  # Default admin password - fine for a local lab
+  adminPassword: "sre-lab-2024"
+  # Enable persistence so dashboards survive pod restarts
+  persistence:
+    enabled: false
+  # Pre-load the Kubernetes cluster overview dashboard
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: 'default'
+          orgId: 1
+          folder: 'SRE Lab'
+          type: file
+          disableDeletion: false
+          options:
+            path: /var/lib/grafana/dashboards/default
+  # Import community dashboards by ID from grafana.com
+  dashboards:
+    default:
+      kubernetes-cluster:
+        gnetId: 7249
+        revision: 1
+        datasource: Prometheus
+      node-exporter:
+        gnetId: 1860
+        revision: 37
+        datasource: Prometheus
+
+alertmanager:
+  alertmanagerSpec:
+    # Keep alerts for 24 hours
+    retention: 24h
+
+# Disable components that don't work well on single-node WSL2
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+# Node exporter collects host-level metrics (CPU, RAM, disk)
+nodeExporter:
+  enabled: true
+
+# kube-state-metrics collects Kubernetes object metrics
+# (pod counts, deployment status, etc.)
+kube-state-metrics:
+  enabled: true
+
+# Disabled: port 9100 already in use by existing node-exporter
+# in the monitoring namespace - no data loss, same metrics available
+nodeExporter:
+  enabled: false
