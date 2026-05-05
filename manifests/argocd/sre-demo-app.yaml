@@ -2,7 +2,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: sre-demo-app
-  namespace: sre-argocd
+  namespace: argocd
   labels:
     app: sre-demo-app
 spec:
