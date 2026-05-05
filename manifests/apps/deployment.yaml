@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sre-demo-app
+  namespace: sre-apps
+  labels:
+    app: sre-demo-app
+    version: "1.0"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: sre-demo-app
+  template:
+    metadata:
+      labels:
+        app: sre-demo-app
+      annotations:
+        # Tells Prometheus to scrape metrics from this pod
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      serviceAccountName: sre-demo-app
+      containers:
+        - name: sre-demo-app
+          # Simple Python HTTP server built into Python itself
+          # No need to build a custom image for the lab
+          image: python:3.11-slim
+          command:
+            - python
+            - -c
+            - |
+              import http.server, json, os, socketserver
+              class Handler(http.server.BaseHTTPRequestHandler):
+                def do_GET(self):
+                  self.send_response(200)
+                  self.send_header('Content-type', 'application/json')
+                  self.end_headers()
+                  response = {
+                    "status": "healthy",
+                    "app": "sre-demo-app",
+                    "version": "1.0",
+                    "message": "SRE Lab running on Kubernetes"
+                  }
+                  self.wfile.write(json.dumps(response).encode())
+                def log_message(self, format, *args):
+                  pass
+              with socketserver.TCPServer(("", 8080), Handler) as httpd:
+                print("Server running on port 8080")
+                httpd.serve_forever()
+          ports:
+            - containerPort: 8080
+          # Resource limits: prevents this app from consuming
+          # all available memory/CPU on the node
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"
+          # Liveness probe: if this fails, Kubernetes restarts the pod
+          # Checks: is the app still responding at all?
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          # Readiness probe: if this fails, Kubernetes stops sending
+          # traffic to this pod but doesn't restart it
+          # Checks: is the app ready to serve requests?
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10

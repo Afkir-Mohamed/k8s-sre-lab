@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sre-demo-app
+  namespace: sre-argocd
+  labels:
+    app: sre-demo-app
+spec:
+  project: default
+  source:
+    # ArgoCD will watch this Git repository
+    repoURL: https://github.com/Afkir-Mohamed/k8s-sre-lab.git
+    targetRevision: HEAD
+    # Specifically this folder inside the repo
+    path: manifests/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: sre-apps
+  syncPolicy:
+    automated:
+      # Self-healing: if someone manually changes something in the
+      # cluster, ArgoCD corrects it back to match Git
+      selfHeal: true
+      # Prune: if a file is deleted from Git, delete it from
+      # the cluster too
+      prune: true
+    syncOptions:
+      - CreateNamespace=true
