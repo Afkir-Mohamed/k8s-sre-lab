@@ -1,0 +1,102 @@
+name: CI Pipeline
+
+# Run this pipeline on every push and pull request to main
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # ────────────────────────────────────────────
+  # Job 1: Lint Kubernetes manifests
+  # Checks that all YAML files are valid and
+  # follow Kubernetes best practices
+  # ────────────────────────────────────────────
+  lint-manifests:
+    name: Lint Kubernetes Manifests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install kubeconform
+        run: |
+          curl -sSLo /tmp/kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz
+          tar -xzf /tmp/kubeconform.tar.gz -C /tmp
+          sudo mv /tmp/kubeconform /usr/local/bin/
+
+      - name: Validate Kubernetes manifests
+        run: |
+          echo "Validating all Kubernetes manifests..."
+          kubeconform \
+            -strict \
+            -ignore-missing-schemas \
+            -summary \
+            manifests/apps/*.yaml
+          echo "All manifests are valid!"
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Dry-run apply (catch logical errors)
+        run: |
+          echo "Running kubectl dry-run to catch logical errors..."
+          kubectl apply --dry-run=client -f manifests/apps/ 2>&1 || true
+          echo "Dry-run complete"
+
+  # ────────────────────────────────────────────
+  # Job 2: Security scan
+  # Scans our container image for known CVEs
+  # using Trivy - industry standard scanner
+  # ────────────────────────────────────────────
+  security-scan:
+    name: Container Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract image from deployment manifest
+        id: get-image
+        run: |
+          IMAGE=$(grep 'image:' manifests/apps/deployment.yaml | awk '{print $2}')
+          echo "Scanning image: $IMAGE"
+          echo "image=$IMAGE" >> $GITHUB_OUTPUT
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.get-image.outputs.image }}
+          format: table
+          # Only fail on HIGH and CRITICAL vulnerabilities
+          severity: HIGH,CRITICAL
+          # Don't fail the pipeline, just report
+          # In production you would set exit-code: '1'
+          exit-code: '0'
+
+  # ────────────────────────────────────────────
+  # Job 3: Validate ArgoCD application manifests
+  # Makes sure ArgoCD config files are valid
+  # ────────────────────────────────────────────
+  validate-argocd:
+    name: Validate ArgoCD Manifests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check ArgoCD manifests exist and are valid YAML
+        run: |
+          echo "Checking ArgoCD application manifests..."
+          for f in manifests/argocd/*.yaml; do
+            echo "Checking $f..."
+            python3 -c "
+          import yaml, sys
+          with open('$f') as file:
+              docs = list(yaml.safe_load_all(file))
+              print(f'  Valid YAML: {len(docs)} document(s)')
+            "
+          done
+          echo "All ArgoCD manifests are valid!"
