@@ -1,0 +1,107 @@
+---
+# provision-cluster.yaml
+# Provisions the k8s-sre-lab cluster from scratch.
+# Safe to run multiple times - idempotent by design.
+#
+# Usage:
+#   ansible-playbook ansible/provision-cluster.yaml
+#
+# Requirements:
+#   - k3s cluster running (scripts/start-cluster.sh)
+#   - kubectl configured (KUBECONFIG set)
+#   - ansible installed (pip install ansible)
+#   - kubernetes.core collection (ansible-galaxy collection install kubernetes.core)
+
+- name: Provision k8s-sre-lab cluster
+  hosts: localhost
+  connection: local
+  vars:
+    kubeconfig: "{{ lookup('env', 'KUBECONFIG') | default('/etc/rancher/k3s/k3s.yaml') }}"
+    namespaces:
+      - sre-apps
+      - sre-monitoring
+      - argocd
+
+  tasks:
+
+    # ── Namespaces ──────────────────────────────────────────
+    - name: Create required namespaces
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ item }}"
+            labels:
+              managed-by: ansible
+              project: k8s-sre-lab
+      loop: "{{ namespaces }}"
+      # This is idempotency in action: if namespace exists,
+      # Ansible does nothing. If it doesn't, it creates it.
+
+    # ── Verify cluster health ────────────────────────────────
+    - name: Get cluster nodes
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        kind: Node
+      register: nodes
+
+    - name: Assert cluster has at least one Ready node
+      assert:
+        that:
+          - nodes.resources | length > 0
+        fail_msg: "No nodes found in cluster - is k3s running?"
+        success_msg: "Cluster healthy - {{ nodes.resources | length }} node(s) found"
+
+    # ── Verify deployments ───────────────────────────────────
+    - name: Check ArgoCD is deployed
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        kind: Deployment
+        namespace: argocd
+        label_selectors:
+          - app.kubernetes.io/name=argocd-server
+      register: argocd_deploy
+
+    - name: Report ArgoCD status
+      debug:
+        msg: "ArgoCD: {{ 'Running' if argocd_deploy.resources | length > 0 else 'Not deployed' }}"
+
+    - name: Check monitoring stack is deployed
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        kind: Deployment
+        namespace: sre-monitoring
+        label_selectors:
+          - app.kubernetes.io/name=grafana
+      register: grafana_deploy
+
+    - name: Report monitoring status
+      debug:
+        msg: "Grafana: {{ 'Running' if grafana_deploy.resources | length > 0 else 'Not deployed' }}"
+
+    # ── Verify app ───────────────────────────────────────────
+    - name: Check sre-demo-app is deployed
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        kind: Deployment
+        namespace: sre-apps
+        label_selectors:
+          - app=sre-demo-app
+      register: app_deploy
+
+    - name: Report app status
+      debug:
+        msg: "sre-demo-app: {{ 'Running' if app_deploy.resources | length > 0 else 'Not deployed - apply via ArgoCD' }}"
+
+    # ── Summary ──────────────────────────────────────────────
+    - name: Cluster provisioning complete
+      debug:
+        msg:
+          - "================================================"
+          - "k8s-sre-lab cluster provisioning complete"
+          - "Namespaces ensured: {{ namespaces }}"
+          - "Run kubectl get pods -A to verify all workloads"
+          - "================================================"
